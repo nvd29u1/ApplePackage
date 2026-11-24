@@ -26,6 +26,13 @@ public actor Authenticator {
     private var pod: String?
     private var authenticating = false
 
+    /// Extra headers attached to every sign-in request (e.g. Anisette/ADI
+    /// device-verification headers fetched from the user's own Anisette
+    /// server). Empty by default: with no headers set, requests are built
+    /// exactly as before. The headers are attached before the SAP signature
+    /// is computed, so they travel on the authenticate and 2FA requests.
+    public var anisetteHeaders: [String: String] = [:]
+
     /// A fresh SAP exchange is mandatory. Reuse this instance when supplying a verification code.
     public init(cookies: [Cookie] = []) async throws {
         deviceIdentifier = Configuration.deviceIdentifier
@@ -35,8 +42,9 @@ public actor Authenticator {
         self.cookies = cookies
     }
 
-    public static func authenticate(email: String, password: String, code: String = "", cookies: [Cookie] = []) async throws -> Account {
+    public static func authenticate(email: String, password: String, code: String = "", cookies: [Cookie] = [], anisetteHeaders: [String: String] = []) async throws -> Account {
         let session = try await Authenticator(cookies: cookies)
+        session.anisetteHeaders = anisetteHeaders
         return try await session.authenticate(email: email, password: password, code: code)
     }
 
@@ -51,7 +59,7 @@ public actor Authenticator {
         for _ in 0 ..< 5 {
             let request = try await Self.makeRequest(
                 endpoint: endpoint, email: email, password: password, code: code, cookies: cookies, deviceIdentifier: deviceIdentifier,
-                sapSigner: signer,
+                sapSigner: signer, anisetteHeaders: anisetteHeaders,
             )
             let accumulator = ResponseAccumulator(request: request, maxBodySize: 2 * 1024 * 1024)
             let response = try await client.execute(request: request, delegate: accumulator).futureResult.get()
@@ -99,7 +107,7 @@ public actor Authenticator {
 
     static func makeRequest(
         endpoint: URL, email: String, password: String, code: String, cookies: [Cookie], deviceIdentifier: String,
-        sapSigner: any SAPRequestSigning,
+        sapSigner: any SAPRequestSigning, anisetteHeaders: [String: String] = [:],
     ) async throws -> HTTPClient.Request {
         let parameters: [String: String] = [
             "appleId": email, "attempt": "\(code.isEmpty ? "4" : "2")", "guid": deviceIdentifier, "password": "\(password)\(code)",
@@ -109,6 +117,12 @@ public actor Authenticator {
         var headers: [(String, String)] = [("User-Agent", Configuration.userAgent), ("Content-Type", "application/x-apple-plist")]
         for item in cookies.buildCookieHeader(endpoint) {
             headers.append(item)
+        }
+        // Anisette/ADI device-verification headers (from the user's own
+        // Anisette server) go on before the SAP signature is computed.
+        // Empty by default, so existing callers see no change.
+        for (name, value) in anisetteHeaders {
+            headers.append((name, value))
         }
         _ = try approvedEndpoint(endpoint)
         let signature = try await sapSigner.sign(data)
