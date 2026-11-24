@@ -42,9 +42,9 @@ public actor Authenticator {
         self.cookies = cookies
     }
 
-    public static func authenticate(email: String, password: String, code: String = "", cookies: [Cookie] = [], anisetteHeaders: [String: String] = []) async throws -> Account {
+    public static func authenticate(email: String, password: String, code: String = "", cookies: [Cookie] = [], anisetteHeaders: [String: String] = [:]) async throws -> Account {
         let session = try await Authenticator(cookies: cookies)
-        session.anisetteHeaders = anisetteHeaders
+        await session.anisetteHeaders = anisetteHeaders
         return try await session.authenticate(email: email, password: password, code: code)
     }
 
