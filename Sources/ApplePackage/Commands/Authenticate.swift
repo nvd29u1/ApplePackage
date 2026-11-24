@@ -33,6 +33,13 @@ public actor Authenticator {
     /// is computed, so they travel on the authenticate and 2FA requests.
     public var anisetteHeaders: [String: String] = [:]
 
+    /// Sets the extra Anisette headers. Call this instead of assigning
+    /// `anisetteHeaders` directly: actor-isolated mutable state cannot be
+    /// mutated from a nonisolated context, even with `await` (Swift 6).
+    public func setAnisetteHeaders(_ headers: [String: String]) {
+        anisetteHeaders = headers
+    }
+
     /// A fresh SAP exchange is mandatory. Reuse this instance when supplying a verification code.
     public init(cookies: [Cookie] = []) async throws {
         deviceIdentifier = Configuration.deviceIdentifier
@@ -44,7 +51,7 @@ public actor Authenticator {
 
     public static func authenticate(email: String, password: String, code: String = "", cookies: [Cookie] = [], anisetteHeaders: [String: String] = [:]) async throws -> Account {
         let session = try await Authenticator(cookies: cookies)
-        await session.anisetteHeaders = anisetteHeaders
+        await session.setAnisetteHeaders(anisetteHeaders)
         return try await session.authenticate(email: email, password: password, code: code)
     }
 
