@@ -114,6 +114,13 @@ public actor Authenticator {
         guard var comps = URLComponents(url: baseURL, resolvingAgainstBaseURL: true) else {
             try ensureFailed("\(Strings.invalidAuthEndpoint): \(baseURL)")
         }
+        // NVD build 18: normalize the authenticate path with a trailing
+        // slash, the form iPadn uses — its comment notes Apple's bare
+        // authenticate path on buy pods "can return an unusable response".
+        // Sign-in worked on this exact bare path on 24/11 and fails since
+        // 25/11 with empty 204 / destination-less redirect / 403 / 404 on
+        // identical code, so try the slashed form.
+        if !comps.path.hasSuffix("/") { comps.path += "/" }
         var query = comps.queryItems ?? []
         query.removeAll { $0.name == "guid" }
         query.append(URLQueryItem(name: "guid", value: deviceIdentifier))
