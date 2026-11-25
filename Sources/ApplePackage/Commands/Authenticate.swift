@@ -90,8 +90,17 @@ public actor Authenticator {
         try ensureFailed("Authentication redirect limit exceeded.")
     }
 
-    public static func rotatePasswordToken(for account: inout Account) async throws {
-        account = try await authenticate(email: account.email, password: account.password, cookies: account.cookie)
+    /// Re-authenticates with the saved cookies to rotate the password token.
+    /// `anisetteHeaders` (empty by default) are the Anisette/ADI device-
+    /// verification headers fetched from the user's own Anisette server:
+    /// without them Apple may refuse the request before judging the account
+    /// (empty 204 / destination-less redirect), the same gate as sign-in.
+    /// NVD: added for the "Add to Purchased" flow, which rotates the token
+    /// before every purchase — previously it always authenticated
+    /// header-less, so a purchase could fail with "failed to retrieve
+    /// redirect location" even though sign-in itself carried headers.
+    public static func rotatePasswordToken(for account: inout Account, anisetteHeaders: [String: String] = [:]) async throws {
+        account = try await authenticate(email: account.email, password: account.password, cookies: account.cookie, anisetteHeaders: anisetteHeaders)
     }
 
     static func approvedEndpoint(_ url: URL) throws -> URL {

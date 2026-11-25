@@ -9,9 +9,18 @@ import AsyncHTTPClient
 import Foundation
 
 public enum Purchase {
+    /// `anisetteHeaders` (empty by default) are the Anisette/ADI device-
+    /// verification headers fetched from the user's own Anisette server.
+    /// The buyProduct request is not SAP-signed, so the headers are
+    /// attached as plain request headers. NVD: previously the purchase
+    /// request carried no Anisette headers at all, while sign-in did —
+    /// Apple could then refuse the buy with an empty response / redirect
+    /// before judging the account ("failed to retrieve redirect
+    /// location"), the same gate that broke sign-in in Nov 2026.
     public static func purchase(
         account: inout Account,
         app: Software,
+        anisetteHeaders: [String: String] = [:],
     ) async throws {
         let deviceIdentifier = Configuration.deviceIdentifier
 
@@ -20,12 +29,12 @@ public enum Purchase {
         }
 
         do {
-            try await purchaseWithParams(account: &account, app: app, guid: deviceIdentifier, pricingParameters: "STDQ")
+            try await purchaseWithParams(account: &account, app: app, guid: deviceIdentifier, pricingParameters: "STDQ", anisetteHeaders: anisetteHeaders)
         } catch let error as NSError {
             if error.localizedDescription.contains("failureType: 2059") ||
                 error.localizedDescription.contains(Strings.itemTemporarilyUnavailable)
             {
-                try await purchaseWithParams(account: &account, app: app, guid: deviceIdentifier, pricingParameters: "GAME")
+                try await purchaseWithParams(account: &account, app: app, guid: deviceIdentifier, pricingParameters: "GAME", anisetteHeaders: anisetteHeaders)
             } else {
                 throw error
             }
@@ -37,6 +46,7 @@ public enum Purchase {
         app: Software,
         guid: String,
         pricingParameters: String,
+        anisetteHeaders: [String: String] = [:],
     ) async throws {
         APLogger.debug("purchase: using pricing parameters: \(pricingParameters)")
 
@@ -48,6 +58,7 @@ public enum Purchase {
             app: app,
             guid: guid,
             pricingParameters: pricingParameters,
+            anisetteHeaders: anisetteHeaders,
         )
         let response = try await client.execute(request: request).get()
 
@@ -114,6 +125,7 @@ public enum Purchase {
         app: Software,
         guid: String,
         pricingParameters: String,
+        anisetteHeaders: [String: String] = [:],
     ) throws -> HTTPClient.Request {
         let payload: [String: Any] = [
             "appExtVrsId": "0",
@@ -140,6 +152,15 @@ public enum Purchase {
             ("X-Apple-Store-Front", "\(account.store)-1"),
             ("X-Token", account.passwordToken),
         ]
+
+        // Anisette/ADI device-verification headers from the user's own
+        // server (empty when no server is configured — behaviour then
+        // unchanged). The server only returns Anisette keys
+        // (X-Apple-I-MD, X-Apple-I-MD-M, ...), which do not overlap the
+        // fixed headers above.
+        for (name, value) in anisetteHeaders.sorted(by: { $0.key < $1.key }) {
+            headers.append((name, value))
+        }
 
         let host = Configuration.purchaseAPIHost(pod: account.pod)
         let urlString = "https://\(host)/WebObjects/MZFinance.woa/wa/buyProduct"
