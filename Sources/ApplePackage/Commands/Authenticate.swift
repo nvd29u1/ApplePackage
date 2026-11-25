@@ -41,22 +41,13 @@ public actor Authenticator {
     }
 
     /// User-Agent override for the authenticate request, if any. NVD build
-    /// 19: when Anisette headers come from a third-party server, the
-    /// request's User-Agent must describe the SAME client the headers were
-    /// provisioned for — Apple's Oct 2026 gate rejects anisette that does
-    /// not match the client info (see the Sign tab's Anisette client:
-    /// "every Apple request uses the client info and the user agent that
-    /// the anisette server reports at /v3/client_info", and iPadn's
-    /// TestFlightKit TFInvariants, which treats UA vs X-MMe-Client-Info
-    /// consistency as an invariant Apple keys on). The fork's static
-    /// Configurator/2.17 UA says "OS X 15.2" while the jkcoxson headers'
-    /// X-MMe-Client-Info says "MacBookPro13,3 / OS X 10.12.6 / akd/1.0"
-    /// — that mismatch is the one remaining demonstrated inconsistency
-    /// in the request that Apple 301s without Location on build 18
-    /// (trailing slash was already on the URL: two code layers add it,
-    /// and the log only hid it because safeURL rebuilt from URL.path,
-    /// which drops trailing slashes). Nil = old behaviour (static
-    /// Configurator UA). Set via `setRequestUserAgent`, same Swift 6
+    /// 19: iPadn v2.3.5 signs in with `Configurator/2.21 (Macintosh;
+    /// OS X 15.2; 24C5089c) AppleWebKit/0620.1.16.11.6` and no Anisette
+    /// headers at all, and it logs in fine on the same device/account/
+    /// network where this fork's static 2.17 UA + attempt "4" + third-party
+    /// (jkcoxson) Anisette headers got 301-without-Location / 204 — so
+    /// sign-in passes iPadn's UA through here. Nil = old behaviour
+    /// (static Configurator UA). Set via `setRequestUserAgent`, same Swift 6
     /// reason as `setAnisetteHeaders`.
     public var requestUserAgent: String? = nil
 
@@ -158,13 +149,16 @@ public actor Authenticator {
         sapSigner: any SAPRequestSigning, anisetteHeaders: [String: String] = [:], userAgent: String? = nil,
     ) async throws -> HTTPClient.Request {
         let parameters: [String: String] = [
-            "appleId": email, "attempt": "\(code.isEmpty ? "4" : "2")", "guid": deviceIdentifier, "password": "\(password)\(code)",
+            "appleId": email, "attempt": "\(code.isEmpty ? "1" : "2")", "guid": deviceIdentifier, "password": "\(password)\(code)",
             "rmp": "0", "why": "signIn",
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: parameters, format: .xml, options: 0)
-        // NVD build 19: the User-Agent must match the client the Anisette
-        // headers were provisioned for (see requestUserAgent); nil keeps
-        // the static Configurator UA (old behaviour).
+        // NVD build 19: per-call User-Agent override (see
+        // requestUserAgent). Sign-in passes iPadn's UA (Configurator/2.21),
+        // proven working on the same device/account on 25/11 while this
+        // fork's static 2.17 + attempt "4" got 301-without-Location; nil
+        // keeps the static Configurator UA (old behaviour, still used by
+        // rotate/store calls).
         var headers: [(String, String)] = [("User-Agent", userAgent ?? Configuration.userAgent), ("Content-Type", "application/x-apple-plist")]
         for item in cookies.buildCookieHeader(endpoint) {
             headers.append(item)
