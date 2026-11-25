@@ -40,6 +40,30 @@ public actor Authenticator {
         anisetteHeaders = headers
     }
 
+    /// User-Agent override for the authenticate request, if any. NVD build
+    /// 19: when Anisette headers come from a third-party server, the
+    /// request's User-Agent must describe the SAME client the headers were
+    /// provisioned for — Apple's Oct 2026 gate rejects anisette that does
+    /// not match the client info (see the Sign tab's Anisette client:
+    /// "every Apple request uses the client info and the user agent that
+    /// the anisette server reports at /v3/client_info", and iPadn's
+    /// TestFlightKit TFInvariants, which treats UA vs X-MMe-Client-Info
+    /// consistency as an invariant Apple keys on). The fork's static
+    /// Configurator/2.17 UA says "OS X 15.2" while the jkcoxson headers'
+    /// X-MMe-Client-Info says "MacBookPro13,3 / OS X 10.12.6 / akd/1.0"
+    /// — that mismatch is the one remaining demonstrated inconsistency
+    /// in the request that Apple 301s without Location on build 18
+    /// (trailing slash was already on the URL: two code layers add it,
+    /// and the log only hid it because safeURL rebuilt from URL.path,
+    /// which drops trailing slashes). Nil = old behaviour (static
+    /// Configurator UA). Set via `setRequestUserAgent`, same Swift 6
+    /// reason as `setAnisetteHeaders`.
+    public var requestUserAgent: String? = nil
+
+    public func setRequestUserAgent(_ userAgent: String?) {
+        requestUserAgent = userAgent
+    }
+
     /// A fresh SAP exchange is mandatory. Reuse this instance when supplying a verification code.
     public init(cookies: [Cookie] = []) async throws {
         deviceIdentifier = Configuration.deviceIdentifier
@@ -49,9 +73,10 @@ public actor Authenticator {
         self.cookies = cookies
     }
 
-    public static func authenticate(email: String, password: String, code: String = "", cookies: [Cookie] = [], anisetteHeaders: [String: String] = [:]) async throws -> Account {
+    public static func authenticate(email: String, password: String, code: String = "", cookies: [Cookie] = [], anisetteHeaders: [String: String] = [:], userAgent: String? = nil) async throws -> Account {
         let session = try await Authenticator(cookies: cookies)
         await session.setAnisetteHeaders(anisetteHeaders)
+        await session.setRequestUserAgent(userAgent)
         return try await session.authenticate(email: email, password: password, code: code)
     }
 
@@ -66,7 +91,7 @@ public actor Authenticator {
         for _ in 0 ..< 5 {
             let request = try await Self.makeRequest(
                 endpoint: endpoint, email: email, password: password, code: code, cookies: cookies, deviceIdentifier: deviceIdentifier,
-                sapSigner: signer, anisetteHeaders: anisetteHeaders,
+                sapSigner: signer, anisetteHeaders: anisetteHeaders, userAgent: requestUserAgent,
             )
             let accumulator = ResponseAccumulator(request: request, maxBodySize: 2 * 1024 * 1024)
             let response = try await client.execute(request: request, delegate: accumulator).futureResult.get()
@@ -99,8 +124,8 @@ public actor Authenticator {
     /// before every purchase — previously it always authenticated
     /// header-less, so a purchase could fail with "failed to retrieve
     /// redirect location" even though sign-in itself carried headers.
-    public static func rotatePasswordToken(for account: inout Account, anisetteHeaders: [String: String] = [:]) async throws {
-        account = try await authenticate(email: account.email, password: account.password, cookies: account.cookie, anisetteHeaders: anisetteHeaders)
+    public static func rotatePasswordToken(for account: inout Account, anisetteHeaders: [String: String] = [:], userAgent: String? = nil) async throws {
+        account = try await authenticate(email: account.email, password: account.password, cookies: account.cookie, anisetteHeaders: anisetteHeaders, userAgent: userAgent)
     }
 
     static func approvedEndpoint(_ url: URL) throws -> URL {
@@ -130,14 +155,17 @@ public actor Authenticator {
 
     static func makeRequest(
         endpoint: URL, email: String, password: String, code: String, cookies: [Cookie], deviceIdentifier: String,
-        sapSigner: any SAPRequestSigning, anisetteHeaders: [String: String] = [:],
+        sapSigner: any SAPRequestSigning, anisetteHeaders: [String: String] = [:], userAgent: String? = nil,
     ) async throws -> HTTPClient.Request {
         let parameters: [String: String] = [
             "appleId": email, "attempt": "\(code.isEmpty ? "4" : "2")", "guid": deviceIdentifier, "password": "\(password)\(code)",
             "rmp": "0", "why": "signIn",
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: parameters, format: .xml, options: 0)
-        var headers: [(String, String)] = [("User-Agent", Configuration.userAgent), ("Content-Type", "application/x-apple-plist")]
+        // NVD build 19: the User-Agent must match the client the Anisette
+        // headers were provisioned for (see requestUserAgent); nil keeps
+        // the static Configurator UA (old behaviour).
+        var headers: [(String, String)] = [("User-Agent", userAgent ?? Configuration.userAgent), ("Content-Type", "application/x-apple-plist")]
         for item in cookies.buildCookieHeader(endpoint) {
             headers.append(item)
         }
